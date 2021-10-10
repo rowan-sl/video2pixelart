@@ -12,6 +12,16 @@ parser.add_argument(
     required=False,
 )
 parser.add_argument(
+    "-L",
+    "--live",
+    dest="live",
+    action="store_const",
+    const=True,
+    default=False,
+    help="livestream video from camera.",
+    required=False,
+)
+parser.add_argument(
     "-l",
     "--load",
     dest="load",
@@ -51,8 +61,11 @@ parser.add_argument(
 )
 args = parser.parse_args()
 if ((args.source is not None) and (args.load is not None)):
-    print("can only load a video OR cpav file, not bolth at the same time!")
+    print("can only load a video, stream, OR load cpav file, not multiple at the same time!")
     sys.exit(1)
-if ((args.source is None) and (args.load is None)):
-    print("must provide a file to load!")
+if (((args.source is not None) or (args.load is not None)) and (args.live)):
+    print("can only load a video, stream, OR load cpav file, not multiple at the same time!")
+    sys.exit(1)
+if (((args.source is None) and (args.load is None)) and (not args.live)):
+    print("at least one of -s, -l, or -L must be provided!")
     sys.exit(1)
