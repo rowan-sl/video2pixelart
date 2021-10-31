@@ -5,3 +5,4 @@ dist
 archive
 *.spec
 **__pycache__
+.vscode
