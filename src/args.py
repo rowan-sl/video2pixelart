@@ -59,13 +59,14 @@ parser.add_argument(
     required=False,
     help="do not actualy play the converted video. usefull for benchmarking",
 )
-args = parser.parse_args()
-if ((args.source is not None) and (args.load is not None)):
-    print("can only load a video, stream, OR load cpav file, not multiple at the same time!")
-    sys.exit(1)
-if (((args.source is not None) or (args.load is not None)) and (args.live)):
-    print("can only load a video, stream, OR load cpav file, not multiple at the same time!")
-    sys.exit(1)
-if (((args.source is None) and (args.load is None)) and (not args.live)):
-    print("at least one of -s, -l, or -L must be provided!")
-    sys.exit(1)
+
+def get_args():
+    args = parser.parse_args()
+
+    if ((args.source is not None) and (args.load is not None)):
+        raise argparse.ArgumentError("can only load a video, stream, OR load cpav file, not multiple at the same time!")
+    if (((args.source is not None) or (args.load is not None)) and (args.live)):
+        raise argparse.ArgumentError("can only load a video, stream, OR load cpav file, not multiple at the same time!")
+    if (((args.source is None) and (args.load is None)) and (not args.live)):
+        raise argparse.ArgumentError("at least one of -s, -l, or -L must be provided!")
+    return args

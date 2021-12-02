@@ -13,61 +13,73 @@ from time import sleep
 import signal
 import time
 
-BRAILE = "⣿"
+from encoding import CPAV, Video
+from args import get_args
+from utils import get_useable_threads
+
+THREAD_COUNT = get_useable_threads(max_threads=16)
+
 BLOCK = "█"
 
 start = time.time()
-MAX_THREADS = 16
-AVAIL_MAX_THREADS = len(os.sched_getaffinity(0))
-if AVAIL_MAX_THREADS < MAX_THREADS:
-    THREAD_COUNT = AVAIL_MAX_THREADS
-else:
-    THREAD_COUNT = MAX_THREADS
 
 framebuffer = queue.Queue(maxsize=10)
 
-stop = False
 
-def add_frame(frame):
-    try:
-        framebuffer.put_nowait(frame)
-    except queue.Full:
-        pass
+def print_buffer(buf: queue.Queue, clear_screen_on_finish: bool = True):
+    while True:
+        frame = buf.get()
+        buf.task_done()
+        if frame is None:
+            break
+        time.sleep(0.01)
+        print(frame)
+    if clear_screen_on_finish:
+        # to prevent tearing, dont do it for each frame, but at the end
+        clear_screen()
+    while True:
+        # empty the buffer so join works (just in case)
+        try:
+            _ = buf.get_nowait()
+            buf.task_done()
+        except:
+            break
 
-converter = picharsso.new_drawer("braille", height=terminal_size()[0], colorize=True, threshold=0)
+
+converter: picharsso.draw.BrailleDrawer = picharsso.new_drawer(
+    "braille", height=terminal_size()[0], colorize=True, threshold=0
+)
+# & hacky hack to turn the BrailleDrawer into only drawing boxes (this and threshold=0)
+converter.charset_array[-1] = BLOCK
+
 
 def convert_frame(frame):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     image = Image.fromarray(frame)
-    txtimg = converter(image).replace(BRAILE, BLOCK)
+    txtimg = converter(image)
     return txtimg
+
 
 if __name__ == "__main__":
     result = []
-    #args
-    from args import args
+    # args
+    args = get_args()
     
-    def printer(buf: queue.Queue):
-        while True:
-            frame = framebuffer.get()
-            framebuffer.task_done()
-            if frame is None:
-                break
-            time.sleep(0.01)
-            clear_screen()
-            print(frame)
-
     if args.source is not None:
         video: cv2.VideoCapture = cv2.VideoCapture(str(args.source))
 
         FRAMECOUNT = video.get(cv2.CAP_PROP_FRAME_COUNT)
         FRAMERATE = video.get(cv2.CAP_PROP_FPS)
-        VIDEOLENGTH = FRAMECOUNT/FRAMERATE
+        VIDEOLENGTH = FRAMECOUNT / FRAMERATE
 
         result = []
         if not args.multi:
             # convert the image, the normal way with no multiprocessing
-            for i in tqdm.tqdm(range(int(FRAMECOUNT)), desc="converting", unit=" frames"):
+            for i in tqdm.tqdm(
+                range(int(FRAMECOUNT)),
+                desc="converting",
+                unit=" frames"
+            ):
                 read_sucseded, frame = video.read()
                 if not read_sucseded:
                     break
@@ -77,39 +89,53 @@ if __name__ == "__main__":
         else:
             with mp.Pool(THREAD_COUNT) as pool:
                 all_frames = []
-                for i in tqdm.tqdm(range(int(FRAMECOUNT)), desc="loading frames", unit=" frames"):
+                for i in tqdm.tqdm(
+                    range(int(FRAMECOUNT)),
+                    desc="loading frames",
+                    unit=" frames"
+                ):
                     read_sucseded, frame = video.read()
                     if not read_sucseded:
                         break
                     all_frames.append(frame)
-                result = list(tqdm.tqdm(pool.imap(convert_frame, all_frames), desc="    converting", unit=" frames", total=FRAMECOUNT))
+                result = list(
+                    tqdm.tqdm(
+                        pool.imap(convert_frame, all_frames),
+                        desc="    converting",
+                        unit=" frames",
+                        total=FRAMECOUNT,
+                    )
+                )
 
     if args.load is not None:
-        source_file: pathlib.Path = args.load
-        print("loading...")
-        with source_file.open("rb") as f:
-            datacb = f.read()
-        print("decompressing...")
-        datab = gzip.decompress(datacb)
-        print("deserializing...")
-        data = msgpack.loads(datab)
-        print("ready!")
-        FRAMERATE = data["framerate"]
-        FRAMECOUNT = data["framecount"]
-        VIDEOLENGTH = data["length"]
-        result = data["frames"]
+        vfile = CPAV.decode_from_file(args.load)
+        result = vfile.frames
+        FRAMERATE = vfile.framerate
+        FRAMECOUNT = vfile.framecount
+        VIDEOLENGTH = vfile.videolength
     end = time.time()
 
     if args.live:
         cam = cv2.VideoCapture(0)
         FRAMERATE = cam.get(cv2.CAP_PROP_FPS)
 
-        converter = picharsso.new_drawer("braille", height=terminal_size()[0], colorize=True, threshold=0)
-        printer_thread = threading.Thread(target=printer, args=[framebuffer,])
+        printer_thread = threading.Thread(
+            target=print_buffer,
+            args=[
+                framebuffer,
+            ],
+        )
         printer_thread.start()
         original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        pool =  mp.Pool(THREAD_COUNT)
+        pool = mp.Pool(THREAD_COUNT)
         signal.signal(signal.SIGINT, original_sigint_handler)
+
+        def add_frame(frame):
+            try:
+                framebuffer.put_nowait(frame)
+            except queue.Full:
+                pass
+
         try:
             while True:
                 sucseeded, frame = cam.read()
@@ -127,37 +153,22 @@ if __name__ == "__main__":
         printer_thread.join()
         framebuffer.join()
         clear_screen()
-    
+
     if args.display:
         for frames in result:
             print(frames)
             sleep(1 / FRAMERATE)
         clear_screen()
 
-    if ((args.source is not None) and (args.save) and (not args.live)):
-        source_path: pathlib.Path = args.source
-        save_path = pathlib.Path(str(source_path.name).split(".")[0]+".cpav")
-        if save_path is not None:
-            if save_path.exists():
-                print("output file already exists!")
-                sys.exit(1)
-            converted_frames = []
-            for frames in result:
-                converted_frames.append(frames)
-            data = {
-                "frames": converted_frames,
-                "length": VIDEOLENGTH,
-                "framerate": FRAMERATE,
-                "framecount": FRAMECOUNT,
-            }
-            print("serializing...")
-            bdata = msgpack.dumps(data)
-            print("compressing...")
-            cbdata = gzip.compress(bdata, 9)
-            print("saving...")
-            with save_path.open("wb") as f:
-                f.write(cbdata)
-            print("saved!")
+    if (args.source is not None) and (args.save) and (not args.live):
+        CPAV.encode_to_file(
+            args.source.name.split(".")[0],# only the start of the filename, with (theoreticaly) no extensions
+            result,
+            VIDEOLENGTH,
+            FRAMERATE,
+            FRAMECOUNT,
+        )
+        print("saved!")
 
     if not args.live:
         print(f"video length (seconds) {VIDEOLENGTH}")
