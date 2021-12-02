@@ -4,9 +4,6 @@ import cv2
 import pathlib
 import tqdm
 from PIL import Image
-import msgpack
-import gzip
-import sys, os
 import multiprocessing as mp
 import threading, queue
 from time import sleep
