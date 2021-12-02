@@ -132,7 +132,7 @@ if __name__ == "__main__":
         for frames in result:
             print(frames)
             sleep(1 / FRAMERATE)
-            clear_screen()
+        clear_screen()
 
     if ((args.source is not None) and (args.save) and (not args.live)):
         source_path: pathlib.Path = args.source
